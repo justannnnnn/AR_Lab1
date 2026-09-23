@@ -1,5 +1,6 @@
 package com.example.ar_lab1
 
+import android.media.FaceDetector
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,7 +48,7 @@ fun FaceAnatomyScreen() {
     var faceInfo by remember { mutableStateOf(FaceInfo()) }
     var mode by remember { mutableStateOf(FaceMode.MESH) }
     var facePoints by remember { mutableStateOf<List<FacePoint>>(emptyList()) }
-
+    var selectedRegion by remember { mutableStateOf<FaceRegion?>(null) }
     val engine = rememberEngine()
     val materialLoader = rememberMaterialLoader(engine)
 
@@ -160,19 +161,26 @@ fun FaceAnatomyScreen() {
                     .firstOrNull { it.trackingState == TrackingState.TRACKING }
 
                 face = trackedFace
+
                 if (trackedFace != null) {
                     facePoints = getFacePoints(trackedFace)
 
                     val pose = trackedFace.centerPose
-
                     val quaternion = pose.rotationQuaternion
-
                     val (pitch, yaw, roll) = quaternionToEuler(
                         x = quaternion[0],
                         y = quaternion[1],
                         z = quaternion[2],
                         w = quaternion[3]
                     )
+
+                    if (mode == FaceMode.REGIONS) {
+                        selectedRegion = detectRegionByHeadPose(
+                            pitch = pitch,
+                            yaw = yaw,
+                            roll = roll
+                        )
+                    }
 
                     faceInfo = FaceInfo(
                         tracking = true,
@@ -191,9 +199,7 @@ fun FaceAnatomyScreen() {
             }
         ) {
             face?.let { trackedFace ->
-
                 when (mode) {
-
                     FaceMode.MESH -> {
                         AugmentedFaceNode(
                             augmentedFace = trackedFace,
@@ -243,8 +249,28 @@ fun FaceAnatomyScreen() {
         Overlay(
             face = face,
             mode = mode,
-            onModeChanged = { mode = it }
+            selectedRegion = selectedRegion,
+            onModeChanged = {
+                selectedRegion = null
+                mode = it
+            }
         )
+    }
+}
+
+private fun detectRegionByHeadPose(
+    pitch: Float,
+    yaw: Float,
+    roll: Float
+): FaceRegion {
+    return when {
+        roll < -20f -> FaceRegion.LEFT_EYE
+        roll > 20f -> FaceRegion.RIGHT_EYE
+        yaw < -20f -> FaceRegion.LEFT_CHEEK
+        yaw > 20f -> FaceRegion.RIGHT_CHEEK
+        pitch < -20f -> FaceRegion.MOUTH
+        pitch > 20f -> FaceRegion.FOREHEAD
+        else -> FaceRegion.NOSE
     }
 }
 
@@ -272,7 +298,6 @@ private fun quaternionToEuler(
     z: Float,
     w: Float
 ): Triple<Float, Float, Float> {
-
     // Pitch — вращение вокруг X
     val sinPitch = 2f * (w * x + y * z)
     val cosPitch = 1f - 2f * (x * x + y * y)
@@ -299,10 +324,12 @@ private fun quaternionToEuler(
         roll * radiansToDegrees
     )
 }
+
 @Composable
 private fun Overlay(
     face: AugmentedFace?,
     mode: FaceMode,
+    selectedRegion: FaceRegion?,
     onModeChanged: (FaceMode) -> Unit
 ) {
     Column(
@@ -315,15 +342,14 @@ private fun Overlay(
         BottomPanel(
             face = face,
             mode = mode,
-            onModeChanged = onModeChanged
+            onModeChanged = onModeChanged,
+            selectedRegion = selectedRegion
         )
     }
 }
 
 @Composable
-private fun FaceStatus(
-    face: AugmentedFace?
-) {
+private fun FaceStatus(face: AugmentedFace?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -367,8 +393,14 @@ private fun FaceStatus(
 private fun BottomPanel(
     face: AugmentedFace?,
     mode: FaceMode,
+    selectedRegion: FaceRegion?,
     onModeChanged: (FaceMode) -> Unit
 ) {
+    if (mode == FaceMode.REGIONS && selectedRegion != null) {
+        Spacer(modifier = Modifier.height(16.dp))
+        FaceRegionInfoPanel(region = selectedRegion)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -379,7 +411,6 @@ private fun BottomPanel(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
-
             Text(
                 text = when (mode) {
                     FaceMode.MESH ->
@@ -429,6 +460,47 @@ private fun BottomPanel(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun FaceRegionInfoPanel(region: FaceRegion) {
+    val pointIndices = FaceRegions.all[region].orEmpty()
+
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = "SELECTED REGION",
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        InfoRow(
+            name = "Region",
+            value = formatRegionName(region)
+        )
+        InfoRow(
+            name = "Landmarks",
+            value = pointIndices.size.toString()
+        )
+        InfoRow(
+            name = "Indices",
+            value = pointIndices.sorted().joinToString(", ")
+        )
+    }
+}
+
+private fun formatRegionName(region: FaceRegion): String {
+    return when (region) {
+        FaceRegion.FOREHEAD -> "Forehead"
+        FaceRegion.LEFT_EYE -> "Left eye"
+        FaceRegion.RIGHT_EYE -> "Right eye"
+        FaceRegion.NOSE -> "Nose"
+        FaceRegion.MOUTH -> "Mouth"
+        FaceRegion.LEFT_CHEEK -> "Left cheek"
+        FaceRegion.RIGHT_CHEEK -> "Right cheek"
     }
 }
 
@@ -528,6 +600,11 @@ private fun ModeChip(
     FilterChip(
         selected = selected,
         onClick = onClick,
-        label = { Text(text) }
+        label = {
+            Text(
+                text = text,
+                fontSize = 12.sp
+            )
+        }
     )
 }
